@@ -1,0 +1,45 @@
+    #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <usrinc/atmi.h>
+#include <usrinc/fbuf.h>
+#include <sqlca.h>
+#include <bank/bank_fdl.h>
+EXEC SQL INCLUDE bank_db.h;
+
+int DEPOSIT_REC(TPSVCINFO *msg)
+{       
+        char amount[100];
+        int ret = 0;
+        int realamount=0;
+        char account[10];
+        char account_send[10];
+        char ret_msg[1024] = {'\0',};
+        FBUF *retbuf;
+        
+        retbuf=(FBUF *)tpalloc("FIELD", NULL,0);
+
+        fbget((FBUF *)(msg->data), FB_AMOUNT,amount,0);
+        fbget((FBUF *)(msg->data), FB_ACCNT_REC,account,0);
+        fbget((FBUF*)(msg->data),ACCOUNT,account_send,0);
+        
+        realamount=atoi(amount);
+        ret=deposit_money(amount,account);
+
+        if(ret == -1){
+            sprintf(ret_msg, "\n\tAccount number is wrong\n");
+            fbput(retbuf,MESSAGE,ret_msg,0);
+            tpreturn(TPFAIL,0,(char *)retbuf,0,TPNOFLAGS);
+        }
+
+        
+        else{
+            sprintf(ret_msg, "\n\tBalance : %d\n",ret);
+            record_trading(realamount,account_send,account);
+            fbput(retbuf,MESSAGE,ret_msg,0);
+            tpreturn(TPSUCCESS,0,(char *)retbuf,0,TPNOFLAGS);
+        }
+
+         
+}
+

@@ -1,0 +1,186 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <usrinc/atmi.h>
+#include <usrinc/fbuf.h>
+#include <sqlca.h>
+#include <bank/bank_fdl.h>
+EXEC SQL INCLUDE bank_db.h;
+
+int CHECK(TPSVCINFO *msg)
+{
+    int ret=0;
+    FBUF *retbuf;
+    char ret_msg[1024] = {'\0',};
+    char account_number[10];
+    fbget((FBUF *)(msg->data),ACCOUNT,account_number,0);
+
+    retbuf=(FBUF *)tpalloc("FIELD", NULL,0);
+    ret=check_account(account_number);
+
+    if(ret <=0){
+        sprintf(ret_msg, "\n\tAccount number is wrong\n");
+        fbput(retbuf,MESSAGE,ret_msg,0);
+        tpreturn(TPFAIL,0,(char *)retbuf,0,TPNOFLAGS);
+    }
+
+    else{
+        sprintf(ret_msg, "\n\tWelcome!!\n");
+        fbput(retbuf,MESSAGE,ret_msg,0);
+        tpreturn(TPSUCCESS,0,(char *)retbuf,0,TPNOFLAGS);
+    }
+}
+
+int BALANCE(TPSVCINFO *msg)
+{
+    int ret = 0;
+    char ret_msg[1024] = {'\0',};
+    char account_number[10];
+    FBUF *retbuf;
+    retbuf=(FBUF *)tpalloc("FIELD", NULL,0);
+
+    fbget((FBUF *)(msg->data),ACCOUNT,account_number,0);
+    
+
+    ret=get_balance_amount(account_number);
+
+    if(ret == -1)
+        sprintf(ret_msg, "\n\tAccount number is wrong\n");
+    else{
+        sprintf(ret_msg, "\n\tBalance : %d\n",ret);
+    }
+
+    fbput(retbuf,MESSAGE,ret_msg,0);
+    tpreturn(TPSUCCESS,0,(char *)retbuf,0,TPNOFLAGS);
+}
+
+int DEPOSIT(TPSVCINFO *msg)
+{       
+        char amount[100];
+        int ret = 0;
+        int realamount=0;
+        char ret_msg[1024] = {'\0',};
+        FBUF *retbuf;
+        char account_number[10];
+        fbget((FBUF *)(msg->data),ACCOUNT,account_number,0);
+        
+        retbuf=(FBUF *)tpalloc("FIELD", NULL,0);
+
+        fbget((FBUF *)(msg->data), FB_AMOUNT,amount,0);
+        realamount=atoi(amount);
+        
+        ret=deposit_money(amount,account_number);
+
+        if(ret == -1)
+            sprintf(ret_msg, "\n\tAccount number is wrong\n");
+        else{
+            sprintf(ret_msg, "\n\tBalance : %d\n",ret);
+            record_trading(realamount,"me",account_number);
+        }
+
+         fbput(retbuf,MESSAGE,ret_msg,0);
+         tpreturn(TPSUCCESS,0,(char *)retbuf,0,TPNOFLAGS);
+}
+
+int WITHDRAW(TPSVCINFO *msg)
+{
+        char amount[100];
+        int ret = 0;
+        int realamount=0;
+        char ret_msg[1024] = {'\0',};
+        FBUF *retbuf;
+        char account_number[10];
+        fbget((FBUF *)(msg->data),ACCOUNT,account_number,0);
+        
+        retbuf=(FBUF *)tpalloc("FIELD", NULL,0);
+        
+        fbget((FBUF *)(msg->data), FB_AMOUNT,amount,0);
+        realamount=atoi(amount)*(-1);
+        
+        ret=withdraw_money(amount,account_number);
+
+        if(ret == -1)
+               sprintf(ret_msg, "\n\tAccount number is wrong\n");
+        else if(ret == -2)
+               sprintf(ret_msg, "\n\tYou don't have enough money. please check your balance\n");
+        else{
+               sprintf(ret_msg, "\n\tBalance : %d\n",ret);
+               record_trading(realamount,"me",account_number);
+        }
+              
+         fbput(retbuf,MESSAGE,ret_msg,0);
+         tpreturn(TPSUCCESS,0,(char *)retbuf,0,TPNOFLAGS);
+}
+
+int TRANSFER(TPSVCINFO *msg)
+{   
+        char amount[100];
+        int ret = 0;
+        char ret_msg[1024] = {'\0',};
+        FBUF *sendbuf, *recvbuf;
+        FBUF *retbuf;
+        long rlen;
+        int res=0;
+        int realamount=0;
+        char account_number[10];
+        char account_number_rec[10];
+        fbget((FBUF *)(msg->data),ACCOUNT,account_number,0);
+        fbget((FBUF *)(msg->data),FB_ACCNT_REC,account_number_rec,0);
+
+        fbget((FBUF *)(msg->data), FB_AMOUNT,amount,0);
+
+        sendbuf = tpalloc("FIELD", NULL, 0);
+        recvbuf = tpalloc("FIELD", NULL, 0);
+        retbuf=(FBUF *)tpalloc("FIELD", NULL,0);
+        fbput(sendbuf, FB_AMOUNT, amount, 0);
+        fbput(sendbuf, FB_ACCNT_REC,account_number_rec,0);
+        fbput(sendbuf,ACCOUNT,account_number,0);
+
+        realamount=atoi(amount)*(-1);
+        ret=withdraw_money(amount,account_number);
+        
+        if(ret == -1){
+               sprintf(ret_msg, "\n\tAccount number is wrong\n");
+               fbput(retbuf,MESSAGE,ret_msg,0);
+               tpreturn(TPFAIL,0,(char *)retbuf,0,TPNOFLAGS);
+        }   
+        else if(ret == -2){
+               sprintf(ret_msg, "\n\tYou don't have enough money. please check your balance\n");
+               fbput(retbuf,MESSAGE,ret_msg,0);
+               tpreturn(TPFAIL,0,(char *)retbuf,0,TPNOFLAGS);
+        }
+
+        else{
+               res = tpcall("DEPOSIT_REC", (char *)sendbuf, 0, (char **)&recvbuf, &rlen, TPNOFLAGS);
+               if(res<0){
+                   sprintf(ret_msg, "\n\ttransfer fail\n");
+                   fbput(retbuf,MESSAGE,ret_msg,0);
+                   tpreturn(TPFAIL,0,(char *)retbuf,0,TPNOFLAGS);    
+               }
+               sprintf(ret_msg, "\n\ttransfer done\n");
+               record_trading(realamount,account_number_rec,account_number);
+               fbput(retbuf,MESSAGE,ret_msg,0);
+               tpreturn(TPSUCCESS,0,(char *)retbuf,0,TPNOFLAGS);
+        }
+}
+
+int HISTORY(TPSVCINFO *msg)
+{
+    int ret = 0;
+    char account[10];
+    char ret_msg[1024] = {'\0',};
+    FBUF *retbuf;
+    retbuf=(FBUF *)tpalloc("FIELD", NULL,0);
+    fbget((FBUF *)(msg->data),ACCOUNT,account,0);
+    ret=trade_recording(account);
+
+    if(ret == -1)
+        sprintf(ret_msg, "\n\tAccount number is wrong\n");
+    else{
+        sprintf(ret_msg, "\n\tThe end(return code: %d)\n",ret);
+    }
+
+    fbput(retbuf,MESSAGE,ret_msg,0);
+    
+    tpreturn(TPSUCCESS,0,(char *)retbuf,0,TPNOFLAGS);
+}
